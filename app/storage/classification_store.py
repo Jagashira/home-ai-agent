@@ -76,6 +76,26 @@ class ClassificationStore:
         ).fetchone()
         return None if row is None else str(row["classification_json"])
 
+    def get_saved_classification(
+        self,
+        *,
+        provider: str,
+        account_id: str,
+        message_id: str,
+    ) -> str | None:
+        """Return the saved classification for one provider account message."""
+        row = self._connection.execute(
+            """
+            SELECT classification_json
+            FROM mail_classifications
+            WHERE provider = ?
+              AND account_id = ?
+              AND message_id = ?
+            """,
+            (provider, account_id, message_id),
+        ).fetchone()
+        return None if row is None else str(row["classification_json"])
+
     def save_classification(
         self,
         *,
