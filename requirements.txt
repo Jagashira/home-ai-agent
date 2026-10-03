@@ -1,3 +1,6 @@
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+openai>=1.66.0
+pydantic>=2.0
+python-dotenv>=1.0
