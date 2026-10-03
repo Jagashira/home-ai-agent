@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from google.auth.exceptions import GoogleAuthError
 from googleapiclient.errors import HttpError
 
+from app.mail.body_normalizer import normalize_email_body
 from app.mail.gmail.auth import ACCOUNT_IDS
 from app.mail.gmail.body import extract_message_body, get_full_message
 from app.mail.gmail.client import get_gmail_service
@@ -45,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("account_id", choices=ACCOUNT_IDS)
     parser.add_argument("message_id")
+    parser.add_argument(
+        "--normalized",
+        action="store_true",
+        help="Normalize the extracted body for AI input before displaying it.",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +73,8 @@ def main() -> int:
         subject = _safe_header_value(payload, "Subject")
         received_at = _received_at(message)
         body = extract_message_body(payload)
+        if args.normalized:
+            body = normalize_email_body(body)
     except (HttpError, KeyError, TypeError, ValueError):
         print(f"{args.account_id}: message request failed", file=sys.stderr)
         return 1
