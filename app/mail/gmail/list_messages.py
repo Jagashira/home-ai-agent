@@ -65,12 +65,15 @@ def fetch_recent_messages(
     account_id: str,
     account_email: str,
     now: datetime | None = None,
+    hours: int = 24,
 ) -> list[MessageMetadata]:
-    """Fetch up to 50 INBOX messages received during the previous 24 hours."""
+    """Fetch up to 50 INBOX messages received during the requested period."""
+    if hours <= 0:
+        raise ValueError("hours must be greater than zero")
     current_time = now or datetime.now(timezone.utc)
     if current_time.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    cutoff_time = current_time.astimezone(timezone.utc) - timedelta(hours=24)
+    cutoff_time = current_time.astimezone(timezone.utc) - timedelta(hours=hours)
     cutoff_epoch = int(cutoff_time.timestamp())
 
     response = (

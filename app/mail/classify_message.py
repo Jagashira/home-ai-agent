@@ -20,7 +20,11 @@ from app.ai.deepseek_client import (
     get_deepseek_client,
 )
 from app.mail.body_normalizer import normalize_email_body
-from app.mail.classifier import ClassificationResponseError, classify_email
+from app.mail.classifier import (
+    ClassificationResponseError,
+    classify_email,
+    format_received_at,
+)
 from app.mail.gmail.auth import ACCOUNT_IDS
 from app.mail.gmail.body import extract_message_body, get_full_message
 from app.mail.gmail.client import get_gmail_service
@@ -82,7 +86,7 @@ def main() -> int:
         client = get_deepseek_client()
         classification = classify_email(
             client,
-            received_at=f"{received_at:%Y-%m-%d %H:%M:%S} Asia/Tokyo",
+            received_at=format_received_at(received_at),
             sender=sender,
             subject=subject,
             normalized_body=normalized_body,

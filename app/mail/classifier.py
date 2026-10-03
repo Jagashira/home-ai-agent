@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -16,6 +17,10 @@ from pydantic import (
 )
 
 from app.ai.deepseek_client import DEEPSEEK_MODEL
+
+
+CLASSIFIER_VERSION = "v1"
+TOKYO_TIMEZONE = ZoneInfo("Asia/Tokyo")
 
 
 Domain = Literal[
@@ -165,6 +170,33 @@ def parse_classification_json(response_text: str) -> EmailClassification:
         ) from error
 
 
+def format_received_at(received_at: datetime) -> str:
+    """Format a timezone-aware received time for classifier input."""
+    if received_at.tzinfo is None:
+        raise ValueError("received_at must be timezone-aware")
+    local_time = received_at.astimezone(TOKYO_TIMEZONE)
+    return f"{local_time:%Y-%m-%d %H:%M:%S} Asia/Tokyo"
+
+
+def build_classification_input(
+    *,
+    received_at: str,
+    sender: str,
+    subject: str,
+    normalized_body: str,
+) -> str:
+    """Build the exact email data sent to the classifier."""
+    return json.dumps(
+        {
+            "received_at": received_at,
+            "from": sender,
+            "subject": subject,
+            "body": normalized_body,
+        },
+        ensure_ascii=False,
+    )
+
+
 def classify_email(
     client: Any,
     *,
@@ -174,14 +206,11 @@ def classify_email(
     normalized_body: str,
 ) -> EmailClassification:
     """Classify one normalized email through DeepSeek structured output."""
-    email_input = json.dumps(
-        {
-            "received_at": received_at,
-            "from": sender,
-            "subject": subject,
-            "body": normalized_body,
-        },
-        ensure_ascii=False,
+    email_input = build_classification_input(
+        received_at=received_at,
+        sender=sender,
+        subject=subject,
+        normalized_body=normalized_body,
     )
     response = client.responses.create(
         model=DEEPSEEK_MODEL,
