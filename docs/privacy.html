@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Privacy Policy for Home Mail Agent.">
+    <title>Privacy Policy — Home Mail Agent</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav container" aria-label="Primary navigation">
+        <a class="brand" href="index.html">Home Mail Agent</a>
+        <div class="nav-links">
+          <a href="index.html">Home</a>
+          <a aria-current="page" href="privacy.html">Privacy Policy</a>
+          <a href="terms.html">Terms of Service</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container legal-page">
+      <header class="legal-header">
+        <p class="eyebrow">Legal</p>
+        <h1>Privacy Policy</h1>
+        <p class="updated">Last updated: October 4, 2026</p>
+      </header>
+
+      <section>
+        <h2>Purpose</h2>
+        <p>
+          Home Mail Agent uses authorized Google Gmail data solely to provide
+          personal email organization and classification functionality.
+        </p>
+      </section>
+
+      <section>
+        <h2>Google data accessed</h2>
+        <p>The application may access:</p>
+        <ul>
+          <li>Gmail message metadata</li>
+          <li>Sender</li>
+          <li>Subject</li>
+          <li>Received date and time</li>
+          <li>Message body text</li>
+          <li>Gmail message and thread identifiers</li>
+          <li>Gmail labels</li>
+        </ul>
+        <p>
+          The application does not intentionally process attachment contents
+          in the current implementation.
+        </p>
+      </section>
+
+      <section>
+        <h2>How Google data is used</h2>
+        <p>Google user data is used to:</p>
+        <ul>
+          <li>Classify email</li>
+          <li>Determine importance and action requirements</li>
+          <li>Detect deadlines and events</li>
+          <li>Generate short summaries</li>
+          <li>Assign organizational Gmail labels</li>
+          <li>Generate daily mail digests</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>AI processing and DeepSeek</h2>
+        <p>
+          For email classification, selected email data is sent to the
+          configured DeepSeek API. The data sent may include the received date
+          and time, sender, subject, and normalized email body.
+        </p>
+        <p>
+          Raw attachments are not sent by the current implementation. DeepSeek
+          is used only to provide the classification functionality described
+          in this policy.
+        </p>
+      </section>
+
+      <section>
+        <h2>Local storage</h2>
+        <p>The application's local SQLite database may store:</p>
+        <ul>
+          <li>Message and thread identifiers</li>
+          <li>Sender and subject</li>
+          <li>Received date and time</li>
+          <li>Content hash</li>
+          <li>Classification result</li>
+          <li>Model and classifier version metadata</li>
+          <li>Classification timestamp</li>
+        </ul>
+        <p>
+          The application does not intentionally store the full raw or
+          normalized email body in its classification database. OAuth
+          credentials and API keys are stored separately from this public
+          website and are not included in GitHub Pages.
+        </p>
+      </section>
+
+      <section>
+        <h2>Gmail modifications</h2>
+        <p>
+          Current Gmail modifications are limited to adding organizational
+          labels. The application does not currently:
+        </p>
+        <ul>
+          <li>Send email automatically</li>
+          <li>Permanently delete email</li>
+          <li>Move email to Trash</li>
+          <li>Archive email automatically</li>
+          <li>Mark email read or unread automatically</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Sharing, sale, and advertising</h2>
+        <p>
+          Home Mail Agent does not sell Google user data and does not use Gmail
+          data for advertising. Third-party processing by the configured AI
+          API is used only for classification functionality.
+        </p>
+      </section>
+
+      <section>
+        <h2>Security</h2>
+        <p>
+          Reasonable local measures are used to reduce unnecessary exposure of
+          sensitive data. API keys and OAuth credentials are excluded from the
+          public repository, OAuth tokens are stored separately, and the
+          classification database does not intentionally store full email
+          bodies. No system can guarantee absolute security.
+        </p>
+      </section>
+
+      <section>
+        <h2>Revoking access</h2>
+        <p>
+          A user may revoke the application's access to a Google account at any
+          time through the Google Account security or third-party access
+          settings. Revoking access prevents the application from making
+          further authorized Gmail requests for that account.
+        </p>
+      </section>
+
+      <section>
+        <h2>Contact</h2>
+        <p>
+          For privacy questions, contact
+          <a href="mailto:azure.fantasista3104@gmail.com">azure.fantasista3104@gmail.com</a>.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-content">
+        <p>&copy; 2026 Home Mail Agent</p>
+        <nav class="footer-links" aria-label="Footer navigation">
+          <a href="index.html">Home</a>
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="terms.html">Terms of Service</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>
