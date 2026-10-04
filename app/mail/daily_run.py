@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, TextIO
 
@@ -19,6 +19,10 @@ from app.mail.digest import generate_daily_digest
 from app.mail.gmail.auth import ACCOUNT_IDS
 from app.mail.gmail.client import get_account_email, get_gmail_service
 from app.mail.gmail.list_messages import MessageMetadata, fetch_recent_messages
+from app.mail.home_assistant_actions import (
+    HomeAssistantActionStats,
+    process_home_assistant_actions,
+)
 from app.storage.classification_store import ClassificationStore
 
 
@@ -35,6 +39,9 @@ class DailyRunStats:
     classification_failures: int = 0
     label_failures: int = 0
     account_failures: int = 0
+    home_assistant: HomeAssistantActionStats = field(
+        default_factory=HomeAssistantActionStats
+    )
 
 
 def process_account(
@@ -122,7 +129,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Classify and build the digest without changing Gmail labels.",
+        help=(
+            "Classify and build the digest without changing Gmail labels or "
+            "calling Home Assistant."
+        ),
     )
     return parser.parse_args()
 
@@ -138,6 +148,27 @@ def print_pipeline_summary(stats: DailyRunStats, *, dry_run: bool) -> None:
     print(f"Already labeled: {stats.already_labeled}")
     print(f"Classification failures: {stats.classification_failures}")
     print(f"Label failures: {stats.label_failures}")
+    print(f"Home Assistant tasks added: {stats.home_assistant.tasks_added}")
+    if dry_run:
+        print(
+            "Would add Home Assistant tasks: "
+            f"{stats.home_assistant.would_add_tasks}"
+        )
+    print(
+        "Home Assistant tasks already present: "
+        f"{stats.home_assistant.tasks_already_present}"
+    )
+    print(f"Notifications sent: {stats.home_assistant.notifications_sent}")
+    if dry_run:
+        print(
+            "Would send notifications: "
+            f"{stats.home_assistant.would_send_notifications}"
+        )
+    print(
+        "Notifications already sent: "
+        f"{stats.home_assistant.notifications_already_sent}"
+    )
+    print(f"Home Assistant failures: {stats.home_assistant.failures}")
     if stats.skipped_by_max_new:
         print(f"Skipped by --max-new: {stats.skipped_by_max_new}")
     if stats.account_failures:
@@ -185,6 +216,12 @@ def main() -> int:
                 except Exception:
                     stats.account_failures += 1
                     print(f"{account_id}: account processing failed", file=sys.stderr)
+            process_home_assistant_actions(
+                results,
+                store,
+                dry_run=args.dry_run,
+                stats=stats.home_assistant,
+            )
     except Exception:
         print("SQLite storage initialization failed", file=sys.stderr)
         return 1
@@ -206,6 +243,7 @@ def main() -> int:
         stats.account_failures
         or stats.classification_failures
         or stats.label_failures
+        or stats.home_assistant.failures
     ) else 0
 
 

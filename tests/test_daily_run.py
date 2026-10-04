@@ -458,6 +458,19 @@ class DailyRunSummaryTests(unittest.TestCase):
         self.assertNotIn("Labels added:", rendered)
         self.assertNotIn("Would add labels:", rendered)
 
+    def test_dry_run_summary_includes_home_assistant_action_counts(self) -> None:
+        stats = DailyRunStats()
+        stats.home_assistant.would_add_tasks = 2
+        stats.home_assistant.would_send_notifications = 2
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_pipeline_summary(stats, dry_run=True)
+        rendered = output.getvalue()
+        self.assertIn("Home Assistant tasks added: 0", rendered)
+        self.assertIn("Would add Home Assistant tasks: 2", rendered)
+        self.assertIn("Would send notifications: 2", rendered)
+        self.assertIn("Home Assistant failures: 0", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

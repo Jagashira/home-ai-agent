@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "mail_agent.db"
+
+
+@dataclass(frozen=True)
+class MailActionState:
+    ha_task_created_at: str | None = None
+    ha_notified_at: str | None = None
 
 
 class ClassificationStore:
@@ -40,6 +47,91 @@ class ClassificationStore:
                 PRIMARY KEY (provider, account_id, message_id)
             )
             """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mail_actions (
+                provider TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                ha_task_created_at TEXT,
+                ha_notified_at TEXT,
+                PRIMARY KEY (provider, account_id, message_id)
+            )
+            """
+        )
+        self._connection.commit()
+
+    def get_mail_action_state(
+        self,
+        *,
+        provider: str,
+        account_id: str,
+        message_id: str,
+    ) -> MailActionState:
+        """Return persisted Home Assistant success state for one message."""
+        row = self._connection.execute(
+            """
+            SELECT ha_task_created_at, ha_notified_at
+            FROM mail_actions
+            WHERE provider = ? AND account_id = ? AND message_id = ?
+            """,
+            (provider, account_id, message_id),
+        ).fetchone()
+        if row is None:
+            return MailActionState()
+        return MailActionState(
+            ha_task_created_at=row["ha_task_created_at"],
+            ha_notified_at=row["ha_notified_at"],
+        )
+
+    def mark_ha_task_created(
+        self,
+        *,
+        provider: str,
+        account_id: str,
+        message_id: str,
+        created_at: str | None = None,
+    ) -> None:
+        """Persist To-do creation only after the external request succeeds."""
+        timestamp = created_at or datetime.now(timezone.utc).isoformat()
+        self._connection.execute(
+            """
+            INSERT INTO mail_actions (
+                provider, account_id, message_id, ha_task_created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(provider, account_id, message_id) DO UPDATE SET
+                ha_task_created_at = COALESCE(
+                    mail_actions.ha_task_created_at,
+                    excluded.ha_task_created_at
+                )
+            """,
+            (provider, account_id, message_id, timestamp),
+        )
+        self._connection.commit()
+
+    def mark_ha_notified(
+        self,
+        *,
+        provider: str,
+        account_id: str,
+        message_id: str,
+        notified_at: str | None = None,
+    ) -> None:
+        """Persist notification delivery only after the external request succeeds."""
+        timestamp = notified_at or datetime.now(timezone.utc).isoformat()
+        self._connection.execute(
+            """
+            INSERT INTO mail_actions (
+                provider, account_id, message_id, ha_notified_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(provider, account_id, message_id) DO UPDATE SET
+                ha_notified_at = COALESCE(
+                    mail_actions.ha_notified_at,
+                    excluded.ha_notified_at
+                )
+            """,
+            (provider, account_id, message_id, timestamp),
         )
         self._connection.commit()
 

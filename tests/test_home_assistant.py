@@ -30,6 +30,7 @@ def client(session: Mock) -> HomeAssistantClient:
         base_url="http://homeassistant.local:8123/",
         token=TEST_TOKEN,
         notify_service="mobile_app_satoshi_iphone",
+        todo_entity="todo.mail_agent",
         session=session,
     )
 
@@ -76,15 +77,53 @@ class HomeAssistantClientTests(unittest.TestCase):
             timeout=10.0,
         )
 
+    def test_todo_payload_includes_exact_datetime(self) -> None:
+        session = Mock()
+        session.request.return_value = response(200, [])
+        home_assistant = client(session)
+
+        home_assistant.add_todo_item(
+            item="Company | Reply needed",
+            description="Summary",
+            due_datetime="2026-10-05T12:00:00+09:00",
+        )
+
+        session.request.assert_called_once_with(
+            "POST",
+            "http://homeassistant.local:8123/api/services/todo/add_item",
+            headers={
+                "Authorization": f"Bearer {TEST_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "entity_id": "todo.mail_agent",
+                "item": "Company | Reply needed",
+                "description": "Summary",
+                "due_datetime": "2026-10-05T12:00:00+09:00",
+            },
+            timeout=10.0,
+        )
+
+    def test_todo_payload_omits_due_when_no_exact_datetime(self) -> None:
+        session = Mock()
+        session.request.return_value = response(200, [])
+        home_assistant = client(session)
+
+        home_assistant.add_todo_item(item="Reply needed", description="Summary")
+
+        payload = session.request.call_args.kwargs["json"]
+        self.assertNotIn("due_datetime", payload)
+
     def test_missing_environment_variable(self) -> None:
         with self.assertRaises(HomeAssistantConfigurationError) as context:
             HomeAssistantClient.from_environment(
                 {
                     "HOME_ASSISTANT_URL": "http://homeassistant.local:8123",
                     "HOME_ASSISTANT_TOKEN": TEST_TOKEN,
+                    "HOME_ASSISTANT_NOTIFY_SERVICE": "mobile_app_satoshi_iphone",
                 }
             )
-        self.assertIn("HOME_ASSISTANT_NOTIFY_SERVICE", str(context.exception))
+        self.assertIn("HOME_ASSISTANT_TODO_ENTITY", str(context.exception))
         self.assertNotIn(TEST_TOKEN, str(context.exception))
 
     def test_unauthorized_response_is_safe(self) -> None:

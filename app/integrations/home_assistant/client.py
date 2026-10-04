@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 _NOTIFY_SERVICE_PATTERN = re.compile(r"[a-z0-9_]+")
+_TODO_ENTITY_PATTERN = re.compile(r"todo\.[a-z0-9_]+")
 
 
 class HomeAssistantError(RuntimeError):
@@ -33,6 +34,7 @@ class HomeAssistantClient:
         base_url: str,
         token: str,
         notify_service: str,
+        todo_entity: str,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         session: requests.Session | None = None,
     ) -> None:
@@ -57,11 +59,17 @@ class HomeAssistantClient:
             raise HomeAssistantConfigurationError(
                 "HOME_ASSISTANT_NOTIFY_SERVICE is invalid"
             )
+        resolved_todo_entity = todo_entity.strip()
+        if not _TODO_ENTITY_PATTERN.fullmatch(resolved_todo_entity):
+            raise HomeAssistantConfigurationError(
+                "HOME_ASSISTANT_TODO_ENTITY is invalid"
+            )
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
 
         self.base_url = resolved_url
         self.notify_service = resolved_service
+        self.todo_entity = resolved_todo_entity
         self.timeout = timeout
         self._token = token.strip()
         self._session = session or requests.Session()
@@ -69,7 +77,8 @@ class HomeAssistantClient:
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(base_url={self.base_url!r}, "
-            f"notify_service={self.notify_service!r}, timeout={self.timeout!r})"
+            f"notify_service={self.notify_service!r}, "
+            f"todo_entity={self.todo_entity!r}, timeout={self.timeout!r})"
         )
 
     @classmethod
@@ -89,6 +98,7 @@ class HomeAssistantClient:
             "HOME_ASSISTANT_URL",
             "HOME_ASSISTANT_TOKEN",
             "HOME_ASSISTANT_NOTIFY_SERVICE",
+            "HOME_ASSISTANT_TODO_ENTITY",
         )
         missing = [name for name in names if not environment.get(name, "").strip()]
         if missing:
@@ -99,6 +109,7 @@ class HomeAssistantClient:
             base_url=environment["HOME_ASSISTANT_URL"],
             token=environment["HOME_ASSISTANT_TOKEN"],
             notify_service=environment["HOME_ASSISTANT_NOTIFY_SERVICE"],
+            todo_entity=environment["HOME_ASSISTANT_TODO_ENTITY"],
             timeout=timeout,
             session=session,
         )
@@ -112,6 +123,10 @@ class HomeAssistantClient:
         return (
             f"{self.base_url}/api/services/notify/{self.notify_service}"
         )
+
+    @property
+    def todo_url(self) -> str:
+        return f"{self.base_url}/api/services/todo/add_item"
 
     def _request(
         self,
@@ -171,3 +186,20 @@ class HomeAssistantClient:
             self.notification_url,
             json={"title": title, "message": message},
         )
+
+    def add_todo_item(
+        self,
+        *,
+        item: str,
+        description: str,
+        due_datetime: str | None = None,
+    ) -> None:
+        """Create one item in the configured Home Assistant To-do list."""
+        payload = {
+            "entity_id": self.todo_entity,
+            "item": item,
+            "description": description,
+        }
+        if due_datetime is not None:
+            payload["due_datetime"] = due_datetime
+        self._request("POST", self.todo_url, json=payload)
