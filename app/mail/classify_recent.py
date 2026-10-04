@@ -94,6 +94,28 @@ class RecentMailClassifier:
         self._client: Any | None = None
         self._api_calls = 0
 
+    def get_current_result(
+        self,
+        metadata: MessageMetadata,
+    ) -> ClassifiedMessage | None:
+        """Read a current cached result before fetching immutable Gmail content."""
+        if self.force:
+            return None
+        cached_json = self.store.get_current_classification(
+            provider=metadata["provider"],
+            account_id=metadata["account_id"],
+            message_id=metadata["message_id"],
+            model=self.model,
+            classifier_version=self.classifier_version,
+        )
+        if cached_json is None:
+            return None
+        try:
+            classification = parse_classification_json(cached_json)
+        except ClassificationResponseError:
+            return None
+        return ClassifiedMessage(metadata, classification, "cache")
+
     def process(self, service: Any, metadata: MessageMetadata) -> ProcessingOutcome:
         """Process one message without logging or persisting its body."""
         message = get_full_message(service, metadata["message_id"])
@@ -166,13 +188,22 @@ def process_messages(
     messages: list[MessageMetadata],
     stats: BatchStats,
     *,
+    check_current_cache_first: bool = False,
     error_stream: TextIO = sys.stderr,
 ) -> list[ClassifiedMessage]:
     """Process messages independently so one failure does not stop the sequence."""
     results: list[ClassifiedMessage] = []
     for metadata in messages:
         try:
-            outcome = processor.process(service, metadata)
+            current_result = (
+                processor.get_current_result(metadata)
+                if check_current_cache_first
+                else None
+            )
+            if current_result is not None:
+                outcome = ProcessingOutcome(status="cache", result=current_result)
+            else:
+                outcome = processor.process(service, metadata)
         except Exception:
             stats.failed += 1
             print(

@@ -7,7 +7,11 @@ import sys
 from dataclasses import dataclass
 from typing import Any, TextIO
 
-from app.mail.classifier import ClassificationResponseError, parse_classification_json
+from app.mail.classifier import (
+    ClassificationResponseError,
+    EmailClassification,
+    parse_classification_json,
+)
 from app.mail.gmail.auth import ACCOUNT_IDS
 from app.mail.gmail.client import get_account_email, get_gmail_service
 from app.mail.gmail.labels import (
@@ -32,6 +36,53 @@ class LabelStats:
     failed: int = 0
 
 
+@dataclass(frozen=True)
+class LabelApplicationResult:
+    current_ai_names: frozenset[str]
+    names_to_add: frozenset[str]
+
+
+class GmailLabelApplier:
+    """Apply the shared deterministic policy to one Gmail account."""
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+        self.label_ids_by_name = list_user_label_ids(service)
+
+    def process(
+        self,
+        message_id: str,
+        classification: EmailClassification,
+        *,
+        apply: bool,
+    ) -> LabelApplicationResult:
+        desired_names = labels_for_classification(classification)
+        current_ids = get_message_label_ids(self.service, message_id)
+        current_ai_names = {
+            name
+            for name, label_id in self.label_ids_by_name.items()
+            if name in AI_LABEL_NAMES and label_id in current_ids
+        }
+        names_to_add = desired_names - current_ai_names
+
+        if apply and names_to_add:
+            for name in sorted(names_to_add):
+                if name not in self.label_ids_by_name:
+                    self.label_ids_by_name[name] = create_user_label(
+                        self.service, name
+                    )
+            add_labels_to_message(
+                self.service,
+                message_id,
+                {self.label_ids_by_name[name] for name in names_to_add},
+            )
+
+        return LabelApplicationResult(
+            current_ai_names=frozenset(current_ai_names),
+            names_to_add=frozenset(names_to_add),
+        )
+
+
 def _format_labels(labels: set[str]) -> str:
     return ", ".join(sorted(labels)) if labels else "-"
 
@@ -47,7 +98,7 @@ def process_account_messages(
     error_stream: TextIO = sys.stderr,
 ) -> None:
     """Process one account while isolating failures to individual messages."""
-    label_ids_by_name = list_user_label_ids(service)
+    applier = GmailLabelApplier(service)
 
     for metadata in messages:
         stats.messages_considered += 1
@@ -62,14 +113,11 @@ def process_account_messages(
                 continue
 
             classification = parse_classification_json(saved_json)
-            desired_names = labels_for_classification(classification)
-            current_ids = get_message_label_ids(service, metadata["message_id"])
-            current_ai_names = {
-                name
-                for name, label_id in label_ids_by_name.items()
-                if name in AI_LABEL_NAMES and label_id in current_ids
-            }
-            names_to_add = desired_names - current_ai_names
+            result = applier.process(
+                metadata["message_id"], classification, apply=apply
+            )
+            current_ai_names = set(result.current_ai_names)
+            names_to_add = set(result.names_to_add)
 
             print(
                 f"{metadata['account_id']} | {metadata['subject']}",
@@ -98,14 +146,6 @@ def process_account_messages(
                 print(file=output_stream)
                 continue
 
-            for name in sorted(names_to_add):
-                if name not in label_ids_by_name:
-                    label_ids_by_name[name] = create_user_label(service, name)
-            add_labels_to_message(
-                service,
-                metadata["message_id"],
-                {label_ids_by_name[name] for name in names_to_add},
-            )
             stats.modified += 1
             print("Added:", file=output_stream)
             for name in sorted(names_to_add):

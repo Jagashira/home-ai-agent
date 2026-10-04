@@ -96,6 +96,30 @@ class ClassificationStore:
         ).fetchone()
         return None if row is None else str(row["classification_json"])
 
+    def get_current_classification(
+        self,
+        *,
+        provider: str,
+        account_id: str,
+        message_id: str,
+        model: str,
+        classifier_version: str,
+    ) -> str | None:
+        """Return a saved result for an immutable message and classifier version."""
+        row = self._connection.execute(
+            """
+            SELECT classification_json
+            FROM mail_classifications
+            WHERE provider = ?
+              AND account_id = ?
+              AND message_id = ?
+              AND model = ?
+              AND classifier_version = ?
+            """,
+            (provider, account_id, message_id, model, classifier_version),
+        ).fetchone()
+        return None if row is None else str(row["classification_json"])
+
     def save_classification(
         self,
         *,
