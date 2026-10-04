@@ -4,3 +4,4 @@ google-auth-oauthlib
 openai>=1.66.0
 pydantic>=2.0
 python-dotenv>=1.0
+requests>=2.31.0
