@@ -4,6 +4,7 @@ import base64
 import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import ANY, patch
@@ -12,7 +13,7 @@ from app.ai.deepseek_client import DEEPSEEK_MODEL
 from app.mail.apply_labels import LabelApplicationResult
 from app.mail.classifier import CLASSIFIER_VERSION, EmailClassification
 from app.mail.classify_recent import ClassifiedMessage, RecentMailClassifier
-from app.mail.daily_run import DailyRunStats, process_account
+from app.mail.daily_run import DailyRunStats, print_pipeline_summary, process_account
 from app.mail.digest import generate_daily_digest
 from app.mail.gmail.list_messages import MessageMetadata
 from app.storage.classification_store import ClassificationStore
@@ -255,16 +256,12 @@ class DailyRunTests(unittest.TestCase):
 
 
 class DigestTests(unittest.TestCase):
-    def render(
+    def render_items(
         self,
-        classifications: list[EmailClassification],
+        items: list[ClassifiedMessage],
         *,
         messages_found: int | None = None,
     ) -> str:
-        items = [
-            ClassifiedMessage(message(index + 1), value, "cache")
-            for index, value in enumerate(classifications)
-        ]
         end = datetime(2026, 10, 4, tzinfo=timezone.utc)
         return generate_daily_digest(
             items,
@@ -275,6 +272,52 @@ class DigestTests(unittest.TestCase):
             new_classifications=0,
             cache_hits=len(items),
         )
+
+    def render(
+        self,
+        classifications: list[EmailClassification],
+        *,
+        messages_found: int | None = None,
+    ) -> str:
+        items = [
+            ClassifiedMessage(message(index + 1), value, "cache")
+            for index, value in enumerate(classifications)
+        ]
+        return self.render_items(
+            items,
+            messages_found=messages_found,
+        )
+
+    def test_cross_account_duplicate_is_shown_once_with_accounts(self) -> None:
+        value = classification(
+            organization="Google",
+            summary="同一のセキュリティ通知です。",
+        )
+        items = [
+            ClassifiedMessage(message(1, "google_2"), value, "cache"),
+            ClassifiedMessage(message(1, "google_3"), value, "cache"),
+        ]
+        digest = self.render_items(items)
+        self.assertEqual(digest.count("同一のセキュリティ通知です。"), 1)
+        self.assertIn("Accounts: google_2, google_3", digest)
+
+    def test_different_content_is_not_aggregated(self) -> None:
+        items = [
+            ClassifiedMessage(
+                message(1, "google_2"),
+                classification(organization="Google", summary="通知Aです。"),
+                "cache",
+            ),
+            ClassifiedMessage(
+                message(1, "google_3"),
+                classification(organization="Google", summary="通知Bです。"),
+                "cache",
+            ),
+        ]
+        digest = self.render_items(items)
+        self.assertIn("通知Aです。", digest)
+        self.assertIn("通知Bです。", digest)
+        self.assertNotIn("Accounts: google_2, google_3", digest)
 
     def test_header_distinguishes_found_classified_and_unclassified(self) -> None:
         digest = self.render([classification() for _ in range(19)], messages_found=25)
@@ -352,6 +395,7 @@ class DigestTests(unittest.TestCase):
             domain="job",
             sender_type="direct_organization",
             importance=2,
+            mail_type="event",
             summary="企業から直接",
         )
         important = classification(
@@ -364,12 +408,55 @@ class DigestTests(unittest.TestCase):
         self.assertLess(digest.index("企業から直接"), digest.index("一般案内"))
         self.assertLess(digest.index("重要度3"), digest.index("一般案内"))
 
+    def test_direct_low_importance_information_is_summarized(self) -> None:
+        digest = self.render(
+            [
+                classification(
+                    domain="job",
+                    sender_type="direct_organization",
+                    mail_type="information",
+                    importance=2,
+                    summary="単なる完了通知",
+                )
+            ]
+        )
+        self.assertIn("その他の就活案内: 1件", digest)
+        self.assertNotIn("単なる完了通知", digest)
+
+    def test_priority_job_mail_types_are_displayed(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                sender_type="platform",
+                mail_type=mail_type,
+                importance=2,
+                summary=f"{mail_type}詳細",
+            )
+            for mail_type in ("selection", "result", "event", "action_required")
+        ]
+        digest = self.render(values)
+        for mail_type in ("selection", "result", "event", "action_required"):
+            self.assertIn(f"{mail_type}詳細", digest)
+
     def test_empty_sections_are_omitted_and_zero_unclassified_is_explicit(self) -> None:
         digest = self.render([classification(domain="service")])
         self.assertNotIn("[要対応]", digest)
         self.assertNotIn("[広告]", digest)
         self.assertIn("Skipped/unclassified: 0", digest)
         self.assertNotIn("未分類メール:", digest)
+
+
+class DailyRunSummaryTests(unittest.TestCase):
+    def test_dry_run_metric_is_named_as_label_assignments(self) -> None:
+        stats = DailyRunStats(labels_added=2, would_add_labels=5)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_pipeline_summary(stats, dry_run=True)
+        rendered = output.getvalue()
+        self.assertIn("Label assignments added: 2", rendered)
+        self.assertIn("Would add label assignments: 5", rendered)
+        self.assertNotIn("Labels added:", rendered)
+        self.assertNotIn("Would add labels:", rendered)
 
 
 if __name__ == "__main__":

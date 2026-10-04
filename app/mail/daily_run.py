@@ -132,9 +132,9 @@ def print_pipeline_summary(stats: DailyRunStats, *, dry_run: bool) -> None:
     print(f"Messages found: {stats.messages_found}")
     print(f"Cache hits: {stats.cache_hits}")
     print(f"New classifications: {stats.new_classifications}")
-    print(f"Labels added: {stats.labels_added}")
+    print(f"Label assignments added: {stats.labels_added}")
     if dry_run:
-        print(f"Would add labels: {stats.would_add_labels}")
+        print(f"Would add label assignments: {stats.would_add_labels}")
     print(f"Already labeled: {stats.already_labeled}")
     print(f"Classification failures: {stats.classification_failures}")
     print(f"Label failures: {stats.label_failures}")

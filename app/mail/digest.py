@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -23,8 +24,50 @@ SECTION_ORDER = (
 )
 
 
-def _section_for(item: ClassifiedMessage) -> str:
-    classification = item.classification
+@dataclass
+class DigestEntry:
+    """One displayed digest entry, possibly shared by multiple accounts."""
+
+    item: ClassifiedMessage
+    account_ids: list[str] = field(default_factory=list)
+
+
+def _aggregate_cross_account_duplicates(
+    messages: Sequence[ClassifiedMessage],
+) -> list[DigestEntry]:
+    entries_by_key: dict[tuple[str | None, str, str], list[DigestEntry]] = {}
+    entries: list[DigestEntry] = []
+    for item in sorted(
+        messages,
+        key=lambda value: value.metadata["received_at"],
+        reverse=True,
+    ):
+        key = (
+            item.classification.organization,
+            item.metadata["subject"],
+            item.classification.summary,
+        )
+        account_id = item.metadata["account_id"]
+        matching_entries = entries_by_key.setdefault(key, [])
+        entry = next(
+            (
+                candidate
+                for candidate in matching_entries
+                if account_id not in candidate.account_ids
+            ),
+            None,
+        )
+        if entry is None:
+            entry = DigestEntry(item=item, account_ids=[account_id])
+            matching_entries.append(entry)
+            entries.append(entry)
+        else:
+            entry.account_ids.append(account_id)
+    return entries
+
+
+def _section_for(entry: DigestEntry) -> str:
+    classification = entry.item.classification
     if classification.deadline_at is not None:
         if classification.action_required or classification.reply_required:
             return "要対応期限"
@@ -57,46 +100,57 @@ def _format_period(value: datetime) -> str:
 
 def _append_message(
     lines: list[str],
-    item: ClassifiedMessage,
+    entry: DigestEntry,
     *,
     show_deadline: bool = False,
 ) -> None:
+    item = entry.item
     classification = item.classification
     sender = classification.organization or item.metadata["from"]
     deadline = _format_deadline(classification.deadline_at)
     deadline_text = f"{deadline} " if show_deadline else ""
     lines.append(f"- {deadline_text}{sender} | {item.metadata['subject']}")
     lines.append(f"  {classification.summary}")
+    if len(entry.account_ids) > 1:
+        lines.append(f"  Accounts: {', '.join(sorted(entry.account_ids))}")
 
 
 def _append_job_section(
     lines: list[str],
-    items: list[ClassifiedMessage],
+    entries: list[DigestEntry],
 ) -> None:
-    priority: list[ClassifiedMessage] = []
-    general_platform: list[ClassifiedMessage] = []
-    other: list[ClassifiedMessage] = []
-    for item in items:
+    priority: list[DigestEntry] = []
+    general_platform: list[DigestEntry] = []
+    other: list[DigestEntry] = []
+    priority_mail_types = {
+        "selection",
+        "deadline",
+        "result",
+        "action_required",
+        "event",
+    }
+    for entry in entries:
+        item = entry.item
         classification = item.classification
         if (
-            classification.importance >= 3
-            or classification.sender_type == "direct_organization"
-            or classification.action_required
+            classification.action_required
             or classification.reply_required
+            or classification.importance >= 3
+            or classification.mail_type in priority_mail_types
         ):
-            priority.append(item)
+            priority.append(entry)
         elif (
             classification.sender_type == "platform"
             and classification.importance <= 2
         ):
-            general_platform.append(item)
+            general_platform.append(entry)
         else:
-            other.append(item)
+            other.append(entry)
 
-    displayed = [*priority, *other, *general_platform[:3]]
-    hidden_count = max(0, len(general_platform) - 3)
-    for item in displayed:
-        _append_message(lines, item)
+    displayed = [*priority, *general_platform[:3]]
+    hidden_count = len(other) + max(0, len(general_platform) - 3)
+    for entry in displayed:
+        _append_message(lines, entry)
     if hidden_count:
         lines.append(f"その他の就活案内: {hidden_count}件")
 
@@ -112,15 +166,11 @@ def generate_daily_digest(
     cache_hits: int,
 ) -> str:
     """Build a concise digest without calling an AI service."""
-    sections: dict[str, list[ClassifiedMessage]] = {
+    sections: dict[str, list[DigestEntry]] = {
         name: [] for name in (*SECTION_ORDER, "広告")
     }
-    for item in sorted(
-        messages,
-        key=lambda value: value.metadata["received_at"],
-        reverse=True,
-    ):
-        sections[_section_for(item)].append(item)
+    for entry in _aggregate_cross_account_duplicates(messages):
+        sections[_section_for(entry)].append(entry)
 
     classified_count = len(messages)
     unclassified_count = max(0, messages_found - classified_count)
@@ -143,10 +193,10 @@ def generate_daily_digest(
         if section_name == "就活":
             _append_job_section(lines, items)
             continue
-        for item in items:
+        for entry in items:
             _append_message(
                 lines,
-                item,
+                entry,
                 show_deadline=section_name in {"要対応期限", "参考期限"},
             )
 
