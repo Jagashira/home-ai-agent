@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 import sys
-import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Callable, TextIO
@@ -14,22 +12,14 @@ from app.integrations.home_assistant.client import (
     HomeAssistantClient,
     HomeAssistantError,
 )
+from app.mail.case_normalizer import normalize_case_text
 from app.mail.classifier import EmailClassification
 from app.mail.classify_recent import ClassifiedMessage
+from app.mail.safe_text import redact_sensitive_values
 from app.storage.classification_store import ClassificationStore
 
 
 TOKYO_TIMEZONE = ZoneInfo("Asia/Tokyo")
-_SENSITIVE_VALUE_PATTERN = re.compile(
-    r"(?i)(otp|one[- ]time(?: password| code)?|verification code|"
-    r"authentication code|認証コード|ワンタイム(?:パスワード|コード)?|"
-    r"password|pin|reset token|api key|secret)"
-    r"(\s*(?:[:：=\-]|は|が)?\s*)[A-Za-z0-9_\-]{4,}"
-)
-_DECORATIVE_BRACKETS = str.maketrans("", "", "【】[]［］「」『』〈〉《》")
-_DECORATIVE_EDGE_CHARACTERS = "★☆●○■□◆◇▲△▼▽※♪♬|｜"
-
-
 @dataclass
 class HomeAssistantActionStats:
     tasks_added: int = 0
@@ -48,12 +38,8 @@ def is_actionable(classification: EmailClassification) -> bool:
 
 
 def normalize_action_case_text(value: str, *, subject: bool = False) -> str:
-    """Normalize exact case keys without fuzzy or semantic matching."""
-    normalized = unicodedata.normalize("NFKC", value)
-    if subject:
-        normalized = normalized.translate(_DECORATIVE_BRACKETS).strip()
-        normalized = normalized.strip(_DECORATIVE_EDGE_CHARACTERS).strip()
-    return re.sub(r"\s+", " ", normalized).strip()
+    """Backward-compatible alias for shared same-case normalization."""
+    return normalize_case_text(value, subject=subject)
 
 
 def _select_newest_actionable_messages(
@@ -83,13 +69,9 @@ def _select_newest_actionable_messages(
     return selected, actionable_count - len(selected)
 
 
-def _redact_sensitive_values(value: str) -> str:
-    return _SENSITIVE_VALUE_PATTERN.sub(r"\1\2[redacted]", value)
-
-
 def action_title(item: ClassifiedMessage) -> str:
     organization = (item.classification.organization or "").strip()
-    subject = _redact_sensitive_values(item.metadata["subject"].strip())
+    subject = redact_sensitive_values(item.metadata["subject"].strip())
     if organization:
         return f"{organization} | {subject}"
     return subject
@@ -106,8 +88,8 @@ def _deadline_description(value: datetime | date | None) -> str | None:
 def todo_description(item: ClassifiedMessage) -> str:
     classification = item.classification
     lines = [
-        _redact_sensitive_values(classification.summary),
-        f"Subject: {_redact_sensitive_values(item.metadata['subject'])}",
+        redact_sensitive_values(classification.summary),
+        f"Subject: {redact_sensitive_values(item.metadata['subject'])}",
         f"Account: {item.metadata['account_id']}",
     ]
     deadline = _deadline_description(classification.deadline_at)
@@ -125,7 +107,7 @@ def notification_message(item: ClassifiedMessage) -> str:
         lines.append(f"期限: {local_deadline:%m/%d %H:%M}")
     elif isinstance(deadline, date):
         lines.append(f"期限: {deadline:%m/%d}")
-    lines.append(_redact_sensitive_values(classification.summary))
+    lines.append(redact_sensitive_values(classification.summary))
     return "\n".join(lines)
 
 

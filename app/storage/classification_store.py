@@ -60,6 +60,36 @@ class ClassificationStore:
             )
             """
         )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS digest_notifications (
+                local_date TEXT PRIMARY KEY,
+                ha_notified_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.commit()
+
+    def has_digest_notification(self, local_date: str) -> bool:
+        """Return whether the morning digest succeeded for a local date."""
+        row = self._connection.execute(
+            "SELECT 1 FROM digest_notifications WHERE local_date = ?",
+            (local_date,),
+        ).fetchone()
+        return row is not None
+
+    def mark_digest_notification(
+        self, local_date: str, *, notified_at: str | None = None
+    ) -> None:
+        """Persist morning digest delivery only after the external call succeeds."""
+        timestamp = notified_at or datetime.now(timezone.utc).isoformat()
+        self._connection.execute(
+            """
+            INSERT OR IGNORE INTO digest_notifications (local_date, ha_notified_at)
+            VALUES (?, ?)
+            """,
+            (local_date, timestamp),
+        )
         self._connection.commit()
 
     def get_mail_action_state(
