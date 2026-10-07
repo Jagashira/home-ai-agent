@@ -85,6 +85,23 @@ class ClassificationStoreTests(unittest.TestCase):
 
         self.store = ClassificationStore(self.database_path)
 
+    def test_digest_notification_state_is_backward_compatible_and_idempotent(self) -> None:
+        self.assertFalse(self.store.has_digest_notification("2026-10-08"))
+        self.store.mark_digest_notification(
+            "2026-10-08", notified_at="2026-10-07T23:00:00+00:00"
+        )
+        self.store.mark_digest_notification(
+            "2026-10-08", notified_at="2026-10-08T00:00:00+00:00"
+        )
+        self.assertTrue(self.store.has_digest_notification("2026-10-08"))
+        connection = sqlite3.connect(self.database_path)
+        count = connection.execute(
+            "SELECT COUNT(*) FROM digest_notifications WHERE local_date = ?",
+            ("2026-10-08",),
+        ).fetchone()[0]
+        connection.close()
+        self.assertEqual(count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

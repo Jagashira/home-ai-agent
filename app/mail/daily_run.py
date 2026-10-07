@@ -23,6 +23,10 @@ from app.mail.home_assistant_actions import (
     HomeAssistantActionStats,
     process_home_assistant_actions,
 )
+from app.mail.morning_digest import (
+    MorningDigestNotificationStats,
+    process_morning_digest_notification,
+)
 from app.storage.classification_store import ClassificationStore
 
 
@@ -41,6 +45,9 @@ class DailyRunStats:
     account_failures: int = 0
     home_assistant: HomeAssistantActionStats = field(
         default_factory=HomeAssistantActionStats
+    )
+    morning_digest: MorningDigestNotificationStats = field(
+        default_factory=MorningDigestNotificationStats
     )
 
 
@@ -134,6 +141,11 @@ def parse_args() -> argparse.Namespace:
             "calling Home Assistant."
         ),
     )
+    parser.add_argument(
+        "--notify-digest",
+        action="store_true",
+        help="Send the concise morning digest once for the current Tokyo date.",
+    )
     return parser.parse_args()
 
 
@@ -177,6 +189,17 @@ def print_pipeline_summary(stats: DailyRunStats, *, dry_run: bool) -> None:
         f"{stats.home_assistant.superseded_skipped}"
     )
     print(f"Home Assistant failures: {stats.home_assistant.failures}")
+    print(f"Morning digest notification sent: {stats.morning_digest.sent}")
+    print(
+        "Morning digest notification already sent: "
+        f"{stats.morning_digest.already_sent}"
+    )
+    if dry_run:
+        print(f"Would send morning digest: {stats.morning_digest.would_send}")
+    print(
+        "Morning digest notification failures: "
+        f"{stats.morning_digest.failures}"
+    )
     if stats.skipped_by_max_new:
         print(f"Skipped by --max-new: {stats.skipped_by_max_new}")
     if stats.account_failures:
@@ -230,11 +253,29 @@ def main() -> int:
                 dry_run=args.dry_run,
                 stats=stats.home_assistant,
             )
+            try:
+                process_morning_digest_notification(
+                    results,
+                    store,
+                    messages_found=stats.messages_found,
+                    requested=args.notify_digest,
+                    dry_run=args.dry_run,
+                    stats=stats.morning_digest,
+                    now=period_end,
+                )
+            except Exception:
+                stats.morning_digest.failures += 1
+                print("Morning digest notification failed", file=sys.stderr)
     except Exception:
         print("SQLite storage initialization failed", file=sys.stderr)
         return 1
 
     print_pipeline_summary(stats, dry_run=args.dry_run)
+    if stats.morning_digest.preview is not None:
+        print()
+        print("=== Morning Digest Preview ===")
+        print(stats.morning_digest.preview.title)
+        print(stats.morning_digest.preview.body)
     print()
     print(
         generate_daily_digest(

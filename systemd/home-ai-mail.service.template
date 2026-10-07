@@ -7,6 +7,5 @@ After=network-online.target
 Type=oneshot
 User=__RUN_USER__
 WorkingDirectory=__REPO_DIR__
-ExecStart=__REPO_DIR__/.venv/bin/python -m app.mail.daily_run --hours 24
+ExecStart=__REPO_DIR__/.venv/bin/python -m app.mail.daily_run --hours 24 --notify-digest
 UMask=0077
-

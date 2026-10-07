@@ -7,13 +7,19 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from app.ai.deepseek_client import DEEPSEEK_MODEL
 from app.mail.apply_labels import LabelApplicationResult
 from app.mail.classifier import CLASSIFIER_VERSION, EmailClassification
 from app.mail.classify_recent import ClassifiedMessage, RecentMailClassifier
-from app.mail.daily_run import DailyRunStats, print_pipeline_summary, process_account
+from app.mail.daily_run import (
+    DailyRunStats,
+    main,
+    parse_args,
+    print_pipeline_summary,
+    process_account,
+)
 from app.mail.digest import generate_daily_digest
 from app.mail.gmail.list_messages import MessageMetadata
 from app.storage.classification_store import ClassificationStore
@@ -300,8 +306,49 @@ class DigestTests(unittest.TestCase):
         digest = self.render_items(items)
         self.assertEqual(digest.count("同一のセキュリティ通知です。"), 1)
         self.assertIn("Accounts: google_2, google_3", digest)
+        self.assertIn("Duplicate digest messages collapsed: 1", digest)
 
-    def test_different_content_is_not_aggregated(self) -> None:
+    def test_duplicate_normalization_keeps_newest_message(self) -> None:
+        older_metadata = message(1, "google_2")
+        older_metadata["subject"] = "【採用】  結果のお知らせ"
+        newer_metadata = message(2, "google_3")
+        newer_metadata["subject"] = "採用 結果のお知らせ"
+        items = [
+            ClassifiedMessage(
+                older_metadata,
+                classification(organization="ＡＣＭＥ", summary="古い通知"),
+                "cache",
+            ),
+            ClassifiedMessage(
+                newer_metadata,
+                classification(organization="ACME", summary="新しい通知"),
+                "cache",
+            ),
+        ]
+        digest = self.render_items(items)
+        self.assertNotIn("古い通知", digest)
+        self.assertIn("新しい通知", digest)
+
+    def test_same_subject_different_organizations_are_not_aggregated(self) -> None:
+        items = [
+            ClassifiedMessage(
+                message(1, "google_2"),
+                classification(organization="Company A", summary="通知A"),
+                "cache",
+            ),
+            ClassifiedMessage(
+                message(1, "google_3"),
+                classification(organization="Company B", summary="通知B"),
+                "cache",
+            ),
+        ]
+        digest = self.render_items(items)
+        self.assertIn("通知A", digest)
+        self.assertIn("通知B", digest)
+
+    def test_different_subjects_are_not_aggregated(self) -> None:
+        second_metadata = message(1, "google_3")
+        second_metadata["subject"] = "Different subject"
         items = [
             ClassifiedMessage(
                 message(1, "google_2"),
@@ -309,7 +356,7 @@ class DigestTests(unittest.TestCase):
                 "cache",
             ),
             ClassifiedMessage(
-                message(1, "google_3"),
+                second_metadata,
                 classification(organization="Google", summary="通知Bです。"),
                 "cache",
             ),
@@ -349,12 +396,42 @@ class DigestTests(unittest.TestCase):
         self.assertIn("[要対応期限]", digest)
         self.assertIn("10/05 12:00", digest)
 
-    def test_optional_deadline_is_in_reference_deadline_section(self) -> None:
+    def test_future_optional_deadline_is_in_reference_deadline_section(self) -> None:
         digest = self.render(
-            [classification(deadline_at="2026-10-03T23:55:00+09:00")]
+            [classification(deadline_at="2026-10-05T23:55:00+09:00")]
         )
         self.assertIn("[参考期限]", digest)
-        self.assertIn("10/03 23:55", digest)
+        self.assertIn("10/05 23:55", digest)
+
+    def test_expired_actionable_and_reference_deadlines_are_suppressed(self) -> None:
+        digest = self.render(
+            [
+                classification(
+                    deadline_at="2026-10-04T08:59:00+09:00",
+                    action_required=True,
+                    summary="期限切れ要対応",
+                ),
+                classification(
+                    deadline_at="2026-10-04T08:58:00+09:00",
+                    summary="期限切れ参考",
+                ),
+            ]
+        )
+        self.assertNotIn("期限切れ要対応", digest)
+        self.assertNotIn("期限切れ参考", digest)
+        self.assertIn("Expired digest deadlines suppressed: 2", digest)
+
+    def test_deadline_equal_to_now_remains(self) -> None:
+        digest = self.render(
+            [
+                classification(
+                    deadline_at="2026-10-04T09:00:00+09:00",
+                    action_required=True,
+                )
+            ]
+        )
+        self.assertIn("[要対応期限]", digest)
+        self.assertIn("Expired digest deadlines suppressed: 0", digest)
 
     def test_many_promotions_are_counted_without_listing_each(self) -> None:
         promotions = [
@@ -369,7 +446,7 @@ class DigestTests(unittest.TestCase):
         self.assertIn("[広告]\n20件", digest)
         self.assertNotIn("広告 0", digest)
 
-    def test_low_importance_platform_job_mail_is_limited_to_three(self) -> None:
+    def test_low_importance_platform_job_mail_is_summarized(self) -> None:
         general_job_mail = [
             classification(
                 domain="job",
@@ -381,8 +458,8 @@ class DigestTests(unittest.TestCase):
             for number in range(10)
         ]
         digest = self.render(general_job_mail)
-        self.assertEqual(digest.count("一般案内 "), 3)
-        self.assertIn("その他の就活案内: 7件", digest)
+        self.assertEqual(digest.count("一般案内 "), 0)
+        self.assertIn("その他の就活案内: 10件", digest)
 
     def test_priority_job_mail_is_displayed_before_platform_general_mail(self) -> None:
         general = classification(
@@ -405,8 +482,9 @@ class DigestTests(unittest.TestCase):
             summary="重要度3",
         )
         digest = self.render([general, direct, important])
-        self.assertLess(digest.index("企業から直接"), digest.index("一般案内"))
-        self.assertLess(digest.index("重要度3"), digest.index("一般案内"))
+        self.assertIn("企業から直接", digest)
+        self.assertIn("重要度3", digest)
+        self.assertNotIn("一般案内\n", digest)
 
     def test_direct_low_importance_information_is_summarized(self) -> None:
         digest = self.render(
@@ -437,6 +515,34 @@ class DigestTests(unittest.TestCase):
         digest = self.render(values)
         for mail_type in ("selection", "result", "event", "action_required"):
             self.assertIn(f"{mail_type}詳細", digest)
+
+    def test_ordinary_job_detail_is_capped_at_five(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                mail_type="event",
+                importance=2,
+                organization=f"Company {number}",
+                summary=f"任意イベント {number}",
+            )
+            for number in range(8)
+        ]
+        digest = self.render(values)
+        self.assertEqual(digest.count("任意イベント "), 5)
+        self.assertIn("その他の就活案内: 3件", digest)
+
+    def test_actionable_job_messages_are_not_hidden_by_job_cap(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                action_required=True,
+                organization=f"Company {number}",
+                summary=f"必須対応 {number}",
+            )
+            for number in range(8)
+        ]
+        digest = self.render(values)
+        self.assertEqual(digest.count("必須対応 "), 8)
 
     def test_empty_sections_are_omitted_and_zero_unclassified_is_explicit(self) -> None:
         digest = self.render([classification(domain="service")])
@@ -474,6 +580,69 @@ class DailyRunSummaryTests(unittest.TestCase):
         self.assertIn("Expired Home Assistant actions skipped: 1", rendered)
         self.assertIn("Superseded Home Assistant actions skipped: 3", rendered)
         self.assertIn("Home Assistant failures: 0", rendered)
+
+
+class DailyRunCliTests(unittest.TestCase):
+    def test_notify_digest_is_opt_in(self) -> None:
+        with patch("sys.argv", ["daily_run"]):
+            self.assertFalse(parse_args().notify_digest)
+        with patch("sys.argv", ["daily_run", "--notify-digest"]):
+            self.assertTrue(parse_args().notify_digest)
+
+    def test_main_passes_default_and_dry_run_notification_flags(self) -> None:
+        for argv, expected_requested, expected_dry_run in (
+            (["daily_run", "--account", "google_1"], False, False),
+            (
+                [
+                    "daily_run", "--account", "google_1", "--dry-run",
+                    "--notify-digest",
+                ],
+                True,
+                True,
+            ),
+        ):
+            with self.subTest(argv=argv):
+                store_class = MagicMock()
+                store_class.return_value.__enter__.return_value = MagicMock()
+                with (
+                    patch("sys.argv", argv),
+                    patch("app.mail.daily_run.ClassificationStore", store_class),
+                    patch("app.mail.daily_run.get_gmail_service", return_value=object()),
+                    patch("app.mail.daily_run.get_account_email", return_value="a@example.com"),
+                    patch("app.mail.daily_run.fetch_recent_messages", return_value=[]),
+                    patch("app.mail.daily_run.process_home_assistant_actions"),
+                    patch("app.mail.daily_run.process_morning_digest_notification") as morning,
+                    redirect_stdout(io.StringIO()),
+                ):
+                    result = main()
+                self.assertEqual(result, 0)
+                self.assertEqual(morning.call_args.kwargs["requested"], expected_requested)
+                self.assertEqual(morning.call_args.kwargs["dry_run"], expected_dry_run)
+
+    def test_morning_digest_failure_does_not_prevent_terminal_digest(self) -> None:
+        store_class = MagicMock()
+        store_class.return_value.__enter__.return_value = MagicMock()
+        output = io.StringIO()
+        errors = io.StringIO()
+        with (
+            patch("sys.argv", ["daily_run", "--account", "google_1", "--notify-digest"]),
+            patch("app.mail.daily_run.ClassificationStore", store_class),
+            patch("app.mail.daily_run.get_gmail_service", return_value=object()),
+            patch("app.mail.daily_run.get_account_email", return_value="a@example.com"),
+            patch("app.mail.daily_run.fetch_recent_messages", return_value=[]),
+            patch("app.mail.daily_run.process_home_assistant_actions"),
+            patch(
+                "app.mail.daily_run.process_morning_digest_notification",
+                side_effect=RuntimeError("token must stay hidden"),
+            ),
+            redirect_stdout(output),
+            patch("sys.stderr", errors),
+        ):
+            result = main()
+        self.assertEqual(result, 0)
+        self.assertIn("=== Daily Mail Digest ===", output.getvalue())
+        self.assertIn("Morning digest notification failed", errors.getvalue())
+        self.assertNotIn("token must stay hidden", errors.getvalue())
 
 
 if __name__ == "__main__":
