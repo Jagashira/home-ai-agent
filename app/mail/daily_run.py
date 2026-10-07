@@ -168,6 +168,14 @@ def print_pipeline_summary(stats: DailyRunStats, *, dry_run: bool) -> None:
         "Notifications already sent: "
         f"{stats.home_assistant.notifications_already_sent}"
     )
+    print(
+        "Expired Home Assistant actions skipped: "
+        f"{stats.home_assistant.expired_skipped}"
+    )
+    print(
+        "Superseded Home Assistant actions skipped: "
+        f"{stats.home_assistant.superseded_skipped}"
+    )
     print(f"Home Assistant failures: {stats.home_assistant.failures}")
     if stats.skipped_by_max_new:
         print(f"Skipped by --max-new: {stats.skipped_by_max_new}")

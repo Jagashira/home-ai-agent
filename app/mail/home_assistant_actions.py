@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Callable, TextIO
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,8 @@ _SENSITIVE_VALUE_PATTERN = re.compile(
     r"password|pin|reset token|api key|secret)"
     r"(\s*(?:[:：=\-]|は|が)?\s*)[A-Za-z0-9_\-]{4,}"
 )
+_DECORATIVE_BRACKETS = str.maketrans("", "", "【】[]［］「」『』〈〉《》")
+_DECORATIVE_EDGE_CHARACTERS = "★☆●○■□◆◇▲△▼▽※♪♬|｜"
 
 
 @dataclass
@@ -35,11 +38,49 @@ class HomeAssistantActionStats:
     notifications_sent: int = 0
     would_send_notifications: int = 0
     notifications_already_sent: int = 0
+    expired_skipped: int = 0
+    superseded_skipped: int = 0
     failures: int = 0
 
 
 def is_actionable(classification: EmailClassification) -> bool:
     return classification.action_required or classification.reply_required
+
+
+def normalize_action_case_text(value: str, *, subject: bool = False) -> str:
+    """Normalize exact case keys without fuzzy or semantic matching."""
+    normalized = unicodedata.normalize("NFKC", value)
+    if subject:
+        normalized = normalized.translate(_DECORATIVE_BRACKETS).strip()
+        normalized = normalized.strip(_DECORATIVE_EDGE_CHARACTERS).strip()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _select_newest_actionable_messages(
+    messages: list[ClassifiedMessage],
+) -> tuple[list[ClassifiedMessage], int]:
+    newest_by_case: dict[tuple[str, str], ClassifiedMessage] = {}
+    actionable_count = 0
+    for item in messages:
+        if not is_actionable(item.classification):
+            continue
+        actionable_count += 1
+        key = (
+            normalize_action_case_text(item.classification.organization or ""),
+            normalize_action_case_text(item.metadata["subject"], subject=True),
+        )
+        existing = newest_by_case.get(key)
+        if (
+            existing is None
+            or item.metadata["received_at"] > existing.metadata["received_at"]
+        ):
+            newest_by_case[key] = item
+    selected = sorted(
+        newest_by_case.values(),
+        key=lambda item: item.metadata["received_at"],
+        reverse=True,
+    )
+    return selected, actionable_count - len(selected)
 
 
 def _redact_sensitive_values(value: str) -> str:
@@ -98,8 +139,16 @@ def process_home_assistant_actions(
         HomeAssistantClient.from_environment
     ),
     error_stream: TextIO = sys.stderr,
+    now: datetime | None = None,
 ) -> None:
     """Create each pending To-do and notification independently and once."""
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    selected_messages, superseded_count = _select_newest_actionable_messages(
+        messages
+    )
+    stats.superseded_skipped += superseded_count
     client: HomeAssistantClient | None = None
     configuration_failed = False
 
@@ -117,8 +166,10 @@ def process_home_assistant_actions(
             return None
         return client
 
-    for item in messages:
-        if not is_actionable(item.classification):
+    for item in selected_messages:
+        deadline = item.classification.deadline_at
+        if isinstance(deadline, datetime) and deadline < current_time:
+            stats.expired_skipped += 1
             continue
         metadata = item.metadata
         state = store.get_mail_action_state(

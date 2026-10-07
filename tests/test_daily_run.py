@@ -462,6 +462,8 @@ class DailyRunSummaryTests(unittest.TestCase):
         stats = DailyRunStats()
         stats.home_assistant.would_add_tasks = 2
         stats.home_assistant.would_send_notifications = 2
+        stats.home_assistant.expired_skipped = 1
+        stats.home_assistant.superseded_skipped = 3
         output = io.StringIO()
         with redirect_stdout(output):
             print_pipeline_summary(stats, dry_run=True)
@@ -469,6 +471,8 @@ class DailyRunSummaryTests(unittest.TestCase):
         self.assertIn("Home Assistant tasks added: 0", rendered)
         self.assertIn("Would add Home Assistant tasks: 2", rendered)
         self.assertIn("Would send notifications: 2", rendered)
+        self.assertIn("Expired Home Assistant actions skipped: 1", rendered)
+        self.assertIn("Superseded Home Assistant actions skipped: 3", rendered)
         self.assertIn("Home Assistant failures: 0", rendered)
 
 
