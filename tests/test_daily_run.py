@@ -446,7 +446,7 @@ class DigestTests(unittest.TestCase):
         self.assertIn("[広告]\n20件", digest)
         self.assertNotIn("広告 0", digest)
 
-    def test_low_importance_platform_job_mail_is_summarized(self) -> None:
+    def test_low_importance_platform_job_mail_obeys_cap(self) -> None:
         general_job_mail = [
             classification(
                 domain="job",
@@ -458,35 +458,10 @@ class DigestTests(unittest.TestCase):
             for number in range(10)
         ]
         digest = self.render(general_job_mail)
-        self.assertEqual(digest.count("一般案内 "), 0)
-        self.assertIn("その他の就活案内: 10件", digest)
+        self.assertEqual(digest.count("一般案内 "), 5)
+        self.assertIn("その他の就活案内: 5件", digest)
 
-    def test_priority_job_mail_is_displayed_before_platform_general_mail(self) -> None:
-        general = classification(
-            domain="job",
-            sender_type="platform",
-            importance=2,
-            summary="一般案内",
-        )
-        direct = classification(
-            domain="job",
-            sender_type="direct_organization",
-            importance=2,
-            mail_type="event",
-            summary="企業から直接",
-        )
-        important = classification(
-            domain="job",
-            sender_type="platform",
-            importance=3,
-            summary="重要度3",
-        )
-        digest = self.render([general, direct, important])
-        self.assertIn("企業から直接", digest)
-        self.assertIn("重要度3", digest)
-        self.assertNotIn("一般案内\n", digest)
-
-    def test_direct_low_importance_information_is_summarized(self) -> None:
+    def test_direct_low_importance_information_is_an_ordinary_candidate(self) -> None:
         digest = self.render(
             [
                 classification(
@@ -498,8 +473,8 @@ class DigestTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertIn("その他の就活案内: 1件", digest)
-        self.assertNotIn("単なる完了通知", digest)
+        self.assertNotIn("その他の就活案内:", digest)
+        self.assertIn("単なる完了通知", digest)
 
     def test_priority_job_mail_types_are_displayed(self) -> None:
         values = [
@@ -516,7 +491,7 @@ class DigestTests(unittest.TestCase):
         for mail_type in ("selection", "result", "event", "action_required"):
             self.assertIn(f"{mail_type}詳細", digest)
 
-    def test_ordinary_job_detail_is_capped_at_five(self) -> None:
+    def test_twenty_ordinary_job_messages_show_five_and_suppress_fifteen(self) -> None:
         values = [
             classification(
                 domain="job",
@@ -525,11 +500,11 @@ class DigestTests(unittest.TestCase):
                 organization=f"Company {number}",
                 summary=f"任意イベント {number}",
             )
-            for number in range(8)
+            for number in range(20)
         ]
         digest = self.render(values)
         self.assertEqual(digest.count("任意イベント "), 5)
-        self.assertIn("その他の就活案内: 3件", digest)
+        self.assertIn("その他の就活案内: 15件", digest)
 
     def test_actionable_job_messages_are_not_hidden_by_job_cap(self) -> None:
         values = [
@@ -543,6 +518,95 @@ class DigestTests(unittest.TestCase):
         ]
         digest = self.render(values)
         self.assertEqual(digest.count("必須対応 "), 8)
+
+    def test_selection_and_result_messages_bypass_ordinary_cap(self) -> None:
+        ordinary = [
+            classification(
+                domain="job",
+                organization=f"Ordinary {number}",
+                summary=f"ordinary {number}",
+            )
+            for number in range(20)
+        ]
+        exempt = [
+            classification(
+                domain="job",
+                mail_type="selection",
+                organization="Selection Company",
+                summary="selection bypass",
+            ),
+            classification(
+                domain="job",
+                mail_type="result",
+                organization="Result Company",
+                summary="result bypass",
+            ),
+        ]
+        digest = self.render([*ordinary, *exempt])
+        self.assertIn("selection bypass", digest)
+        self.assertIn("result bypass", digest)
+        self.assertEqual(digest.count("ordinary "), 5)
+        self.assertIn("その他の就活案内: 15件", digest)
+
+    def test_importance_orders_ordinary_candidates_without_exempting_them(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                importance=3,
+                organization="High importance",
+                summary="importance winner",
+            ),
+            *[
+                classification(
+                    domain="job",
+                    importance=2,
+                    organization=f"Low {number}",
+                    summary=("importance loser" if number == 0 else f"low {number}"),
+                )
+                for number in range(5)
+            ],
+        ]
+        digest = self.render(values)
+        self.assertIn("importance winner", digest)
+        self.assertNotIn("importance loser", digest)
+        self.assertIn("その他の就活案内: 1件", digest)
+
+    def test_direct_organization_wins_sender_type_tie(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                sender_type="direct_organization",
+                organization="Direct",
+                summary="direct winner",
+            ),
+            *[
+                classification(
+                    domain="job",
+                    sender_type="platform",
+                    organization=f"Platform {number}",
+                    summary=("platform loser" if number == 0 else f"platform {number}"),
+                )
+                for number in range(5)
+            ],
+        ]
+        digest = self.render(values)
+        self.assertIn("direct winner", digest)
+        self.assertNotIn("platform loser", digest)
+
+    def test_newer_received_at_wins_remaining_tie(self) -> None:
+        values = [
+            classification(
+                domain="job",
+                sender_type="platform",
+                organization=f"Platform {number}",
+                summary=("oldest loser" if number == 0 else f"newer {number}"),
+            )
+            for number in range(6)
+        ]
+        digest = self.render(values)
+        self.assertNotIn("oldest loser", digest)
+        for number in range(1, 6):
+            self.assertIn(f"newer {number}", digest)
 
     def test_empty_sections_are_omitted_and_zero_unclassified_is_explicit(self) -> None:
         digest = self.render([classification(domain="service")])

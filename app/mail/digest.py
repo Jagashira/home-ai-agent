@@ -119,23 +119,32 @@ def _append_message(
 
 
 def _append_job_section(lines: list[str], entries: list[DigestEntry]) -> None:
-    priority: list[DigestEntry] = []
+    exempt: list[DigestEntry] = []
     ordinary: list[DigestEntry] = []
-    hidden: list[DigestEntry] = []
     for entry in entries:
         classification = entry.item.classification
         if (
-            classification.importance >= 3
+            classification.action_required
+            or classification.reply_required
             or classification.mail_type in {"selection", "result", "action_required"}
         ):
-            priority.append(entry)
-        elif classification.mail_type in {"event", "deadline"}:
-            ordinary.append(entry)
+            exempt.append(entry)
         else:
-            hidden.append(entry)
-    for entry in [*priority, *ordinary[:5]]:
+            ordinary.append(entry)
+
+    sender_priority = {"direct_organization": 0, "platform": 1}
+    ordinary.sort(
+        key=lambda entry: (
+            -entry.item.classification.importance,
+            sender_priority.get(entry.item.classification.sender_type, 2),
+            -entry.item.metadata["received_at"].timestamp(),
+            entry.item.metadata["account_id"],
+            entry.item.metadata["message_id"],
+        )
+    )
+    for entry in [*exempt, *ordinary[:5]]:
         _append_message(lines, entry)
-    hidden_count = len(hidden) + max(0, len(ordinary) - 5)
+    hidden_count = max(0, len(ordinary) - 5)
     if hidden_count:
         lines.append(f"その他の就活案内: {hidden_count}件")
 
