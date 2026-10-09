@@ -202,6 +202,23 @@ class HomeAssistantActionTests(unittest.TestCase):
         self.assertNotIn("350295", notification_call["message"])
         self.assertIn("[redacted]", todo_call["description"])
 
+    def test_confirmation_code_in_subject_is_redacted_from_ha_outputs(self) -> None:
+        item = classified_message(
+            1,
+            action_required=True,
+            subject="Your X confirmation code is xehwxzpk",
+        )
+        client = Mock()
+
+        self.process([item], client)
+
+        todo_call = client.add_todo_item.call_args.kwargs
+        notification_call = client.send_notification.call_args.kwargs
+        self.assertNotIn("xehwxzpk", todo_call["item"])
+        self.assertNotIn("xehwxzpk", todo_call["description"])
+        self.assertNotIn("xehwxzpk", notification_call["message"])
+        self.assertIn("[redacted]", notification_call["message"])
+
     def test_existing_task_only_sends_notification(self) -> None:
         item = classified_message(1, action_required=True)
         self.mark_task(item)

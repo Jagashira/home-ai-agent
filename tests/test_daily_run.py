@@ -615,6 +615,18 @@ class DigestTests(unittest.TestCase):
         self.assertIn("Skipped/unclassified: 0", digest)
         self.assertNotIn("未分類メール:", digest)
 
+    def test_terminal_digest_redacts_subject_and_summary_codes(self) -> None:
+        metadata = message(1)
+        metadata["subject"] = "Your X confirmation code is xehwxzpk"
+        value = classification(
+            summary="Verification code: AB12CD34",
+            action_required=True,
+        )
+        digest = self.render_items([ClassifiedMessage(metadata, value, "cache")])
+        self.assertNotIn("xehwxzpk", digest)
+        self.assertNotIn("AB12CD34", digest)
+        self.assertGreaterEqual(digest.count("[redacted]"), 2)
+
 
 class DailyRunSummaryTests(unittest.TestCase):
     def test_dry_run_metric_is_named_as_label_assignments(self) -> None:
@@ -707,6 +719,55 @@ class DailyRunCliTests(unittest.TestCase):
         self.assertIn("=== Daily Mail Digest ===", output.getvalue())
         self.assertIn("Morning digest notification failed", errors.getvalue())
         self.assertNotIn("token must stay hidden", errors.getvalue())
+
+    def test_isolated_classification_failure_exits_success_and_is_reported(self) -> None:
+        store_class = MagicMock()
+        store_class.return_value.__enter__.return_value = MagicMock()
+        output = io.StringIO()
+
+        def isolated_failure(
+            service: object,
+            messages: list[MessageMetadata],
+            processor: object,
+            stats: DailyRunStats,
+            **kwargs: object,
+        ) -> list[ClassifiedMessage]:
+            stats.classification_failures += 1
+            return []
+
+        with (
+            patch("sys.argv", ["daily_run", "--account", "google_1"]),
+            patch("app.mail.daily_run.ClassificationStore", store_class),
+            patch("app.mail.daily_run.get_gmail_service", return_value=object()),
+            patch("app.mail.daily_run.get_account_email", return_value="a@example.com"),
+            patch("app.mail.daily_run.fetch_recent_messages", return_value=[message(1)]),
+            patch("app.mail.daily_run.process_account", side_effect=isolated_failure),
+            patch("app.mail.daily_run.process_home_assistant_actions"),
+            patch("app.mail.daily_run.process_morning_digest_notification"),
+            redirect_stdout(output),
+        ):
+            result = main()
+
+        self.assertEqual(result, 0)
+        self.assertIn("Classification failures: 1", output.getvalue())
+        self.assertIn("Skipped/unclassified: 1", output.getvalue())
+
+    def test_fatal_storage_initialization_failure_exits_nonzero(self) -> None:
+        errors = io.StringIO()
+        with (
+            patch("sys.argv", ["daily_run", "--account", "google_1"]),
+            patch(
+                "app.mail.daily_run.ClassificationStore",
+                side_effect=RuntimeError("private database detail"),
+            ),
+            redirect_stdout(io.StringIO()),
+            patch("sys.stderr", errors),
+        ):
+            result = main()
+
+        self.assertEqual(result, 1)
+        self.assertIn("SQLite storage initialization failed", errors.getvalue())
+        self.assertNotIn("private database detail", errors.getvalue())
 
 
 if __name__ == "__main__":

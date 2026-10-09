@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from app.mail.case_normalizer import normalize_case_text
 from app.mail.classify_recent import ClassifiedMessage
+from app.mail.safe_text import redact_sensitive_values
 
 
 TOKYO_TIMEZONE = ZoneInfo("Asia/Tokyo")
@@ -111,9 +112,9 @@ def _append_message(
     deadline = format_digest_deadline(classification.deadline_at)
     lines.append(
         f"- {deadline + ' ' if show_deadline else ''}{sender} | "
-        f"{item.metadata['subject']}"
+        f"{redact_sensitive_values(item.metadata['subject'])}"
     )
-    lines.append(f"  {classification.summary}")
+    lines.append(f"  {redact_sensitive_values(classification.summary)}")
     if len(entry.account_ids) > 1:
         lines.append(f"  Accounts: {', '.join(sorted(entry.account_ids))}")
 

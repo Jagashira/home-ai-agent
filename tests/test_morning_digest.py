@@ -129,6 +129,21 @@ class MorningDigestFormatterTests(unittest.TestCase):
         self.assertIn("[redacted]", digest.body)
         self.assertEqual(digest.title, "朝のメールまとめ | 10/08")
 
+    def test_confirmation_code_in_subject_is_redacted(self) -> None:
+        digest = format_morning_digest(
+            [
+                item(
+                    1,
+                    action=True,
+                    subject="Your X confirmation code is xehwxzpk",
+                )
+            ],
+            messages_found=1,
+            now=NOW,
+        )
+        self.assertNotIn("xehwxzpk", digest.body)
+        self.assertIn("[redacted]", digest.body)
+
 
 class MorningDigestNotificationTests(unittest.TestCase):
     def setUp(self) -> None:

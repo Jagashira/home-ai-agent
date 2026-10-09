@@ -290,7 +290,6 @@ def main() -> int:
     )
     return 1 if (
         stats.account_failures
-        or stats.classification_failures
         or stats.label_failures
         or stats.home_assistant.failures
     ) else 0
